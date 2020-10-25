@@ -4,8 +4,19 @@ open System
 
 module Evaluator =
 
+    [<CustomEquality>]
+    [<CustomComparison>]
     type AttributeKey = AttributeKey of Type
         with
+            override x.Equals(y : obj) =
+                let (AttributeKey ty) = x
+                let (AttributeKey ty') = y :?> AttributeKey
+                ty.Equals(ty')
+
+            override x.GetHashCode() =
+                let (AttributeKey ty) = x
+                ty.GetHashCode()
+
             interface IComparable with
                 member x.CompareTo(y) =
                     let (AttributeKey ownType) = x
@@ -16,7 +27,7 @@ module Evaluator =
     type AttributesCollection = Map<AttributeKey, obj>
 
     type EvaluatorAttributes = {
-        Attributes : Map<int, obj>
+        Attributes : Map<int, AttributesCollection>
     } with
         member x.UpdateAttribute i mapper =
             match Map.tryFind i x.Attributes with
@@ -43,7 +54,6 @@ module Evaluator =
                 { x with Attributes = attributes }
             | _ -> x
 
-
         member x.MapChildAttributesRec i mapping =
             let updatedAttributes = x.MapChildAttributes i mapping
             match  Map.tryFind i x.AttributesHierarchy with
@@ -53,6 +63,13 @@ module Evaluator =
                     updatedAttributes
                     is
             | _ -> updatedAttributes
+
+    let empty =
+        {
+            Attributes = { Attributes = Map.empty }
+            Current = 0
+            AttributesHierarchy = Map.empty
+        }
 
     type Monad<'t> = EvaluatorContext -> EvaluatorContext*'t
 
@@ -111,19 +128,22 @@ module Evaluator =
             do! iMapChildAttributesRec i mapper
         }
 
-    let rec foldM value scope ignoreFn raiseFn =
+    let rec foldM scope ignoreFn raiseFn value =
         match value with
         | Scope (path, items) ->
             builder{
                 let! previous = builder {
                     for item in items do
-                        let! value = foldM item scope ignoreFn raiseFn
+                        let! value = foldM scope ignoreFn raiseFn item
                         let! current = getCurrentId()
                         yield (value, current)
                 }
                 do! incrementCurrent()
                 let childIds = previous |> Seq.map (fun (_, i) -> i)
-                let childs = previous |> Seq.map (fun (child, _) -> child)
+                let childs =
+                    previous
+                    |> Seq.map (fun (child, _) -> child)
+                    |> Seq.toList
                 do! updateHierarchy childIds
                 let! next = scope path childs
                 return next
@@ -141,13 +161,26 @@ module Evaluator =
                 return next
             }
 
-    let setScopeAttribute value =
+    let attributeMapper (empty : 't) (mapper : 't -> 't) (attributes: AttributesCollection) =
+        let key = AttributeKey typeof<'t>
+        let newValue =
+            match Map.tryFind key attributes with
+            | Some attribute ->
+                mapper (attribute :?> 't) :> obj
+            | _ -> empty :> obj
+        Map.add key newValue attributes
+
+    let setScopeAttribute =
 
         let scopeSem path state =
             builder {
 
-                do! 
+                do! mapChildAttributesRec (attributeMapper path (fun prev -> path </> prev))
                 return Scope(path, state)
             }
 
-        failwith ""
+        let ignoreSem path = builder.Return (Ignore path)
+
+        let raiseSem path events = builder.Return (Raise(path, events))
+
+        foldM scopeSem ignoreSem raiseSem

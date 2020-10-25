@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": ".NET Core Attach",
+            "type": "coreclr",
+            "request": "attach",
+            "processId": "${command:pickProcess}"
+        },
+        {
+            "name": "Tdip.SharpWatcher.Tests",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "dotnet",
+            "args": [
+                "vstest",
+                "Tdip.SharpWatcher.Tests.dll"
+            ],
+            "env": {
+                "VSTEST_HOST_DEBUG": "1"
+            },
+            "cwd": "${workspaceFolder}/src/Tdip.SharpWatcher.Tests/bin/Debug/netcoreapp3.1",
+            "stopAtEntry": false,
+            "console": "internalConsole",
+        },
+    ]
+}

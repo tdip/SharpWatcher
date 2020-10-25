@@ -1,24 +1,52 @@
-module Tests
+namespace Tdip.SharpWatcher
 
 open System
 open Xunit
 
-[<Fact>]
-let ``test watch directory`` () =
+module Tests =
 
-    let watch =
+    [<Fact>]
+    let ``test watch directory`` () =
 
-        Root (
-            "/home/user/workspace",
-            [
-                Scope(
-                    AllDirectories </> ByDirectory "node-modules" </> AllDirectories,
-                    [
-                        Ignore AnyFilesystemElement
-                    ]
-                ),
-                Raise (AllDirectories </> ByExtension "json") [Create, Modify, Rename, Delete]
-            ]
-        )
+        (*
+        let watch =
 
-    Assert.True(true)
+            Root (
+                "/home/user/workspace",
+                [
+                    Scope(
+                        AllDirectories </> ByDirectory "node-modules" </> AllDirectories,
+                        [
+                            Ignore AnyFilesystemElement
+                        ]
+                    ),
+                    Raise (AllDirectories </> ByExtension "json") [Create, Modify, Rename, Delete]
+                ]
+            )
+        *)
+
+        let watch =
+            Scope (
+                [ByDirectory "home"; ByDirectory "neto"],
+                [
+                    Scope (
+                        [ByDirectory "folder"],
+                        [
+                            Ignore [AllDirectories]
+                        ]
+                    )
+                    Scope (
+                        [ByDirectory "folder2"],
+                        [
+                            Ignore [AllDirectories]
+                        ]
+                    )
+                ]
+            )
+
+        let result =
+            Evaluator.setScopeAttribute watch Evaluator.empty
+
+        printfn "kaiser %A" result
+
+        Assert.True(true)
