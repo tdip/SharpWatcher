@@ -30,13 +30,15 @@ module Evaluator =
         Attributes : Map<int, AttributesCollection>
     } with
         member x.UpdateAttribute i mapper =
-            match Map.tryFind i x.Attributes with
-            | Some attr ->
-                {
-                    x with
-                        Attributes = Map.add i (mapper attr) x.Attributes
-                }
-            | _ -> x
+            let attr =
+                match Map.tryFind i x.Attributes with
+                | Some attr -> attr
+                | _ -> Map.empty
+            {
+                x with
+                    Attributes = Map.add i (mapper attr) x.Attributes
+            }
+
 
     type EvaluatorContext = {
         Attributes : EvaluatorAttributes
@@ -63,6 +65,12 @@ module Evaluator =
                     updatedAttributes
                     is
             | _ -> updatedAttributes
+
+        member x.Pipe() =
+            {
+                x with
+                    Current = 0
+            }
 
     let empty =
         {
@@ -128,6 +136,22 @@ module Evaluator =
             do! iMapChildAttributesRec i mapper
         }
 
+    let iGetAttribute<'t> i (context: EvaluatorContext) =
+        let key = AttributeKey typeof<'t>
+        let attribute =
+            match Map.tryFind i context.Attributes.Attributes with
+            | Some attributes ->
+                Map.tryFind key attributes
+            | _ -> None
+        (context, Option.map (fun (v: obj) -> v :?> 't) attribute)
+
+    let getAttribute<'t> () =
+        builder {
+            let! i = getCurrentId()
+            let! attribute = iGetAttribute<'t> i
+            return attribute
+        }
+
     let rec foldM scope ignoreFn raiseFn value =
         match value with
         | Scope (path, items) ->
@@ -184,3 +208,14 @@ module Evaluator =
         let raiseSem path events = builder.Return (Raise(path, events))
 
         foldM scopeSem ignoreSem raiseSem
+
+[<AutoOpen>]
+module EvaluatorUnqualified =
+
+    module SharpFold =
+
+        let foldM = Evaluator.foldM
+
+        let getAttribute<'t> = Evaluator.getAttribute<'t>
+
+    let sharpFold = Evaluator.builder

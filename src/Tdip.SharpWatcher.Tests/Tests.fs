@@ -44,9 +44,22 @@ module Tests =
                 ]
             )
 
-        let result =
+        let (result, _) =
             Evaluator.setScopeAttribute watch Evaluator.empty
 
-        printfn "kaiser %A" result
+        let listAttributes =
+            let scopeSem _ _ = sharpFold.Return ()
+            let ignoreSem _ =
+                sharpFold {
+                    let! scopeAttribute = SharpFold.getAttribute<list<SharpWatcherPath>>()
+                    return printfn "attribute %A" scopeAttribute
+                }
+            let raiseSem _ _ = sharpFold.Return ()
+
+            SharpFold.foldM scopeSem ignoreSem raiseSem
+
+
+        result.Pipe() |> listAttributes watch
+        |> printfn "kaiser %A"
 
         Assert.True(true)
