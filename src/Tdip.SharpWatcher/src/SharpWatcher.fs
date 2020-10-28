@@ -1,26 +1,14 @@
 namespace Tdip.SharpWatcher
 
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.IO
 
 module SharpWatcher =
 
-    type WatchAttribute = ByExtension of string
-
-    type Events = {
-        Created : Set<string>
-        Deleted : Set<string>
-    } with
-        static member FromCreated(events: seq<string>) =
-            {
-                Created = Set.ofSeq events
-                Deleted = Set.empty
-            }
-
     type EventsHandler = {
-        OnCreated : FileSystemEventArgs -> unit
-        OnDeleted : FileSystemEventArgs -> unit
+        OnEvent : WatchEvent -> unit
     }
 
     type ISubscription =
@@ -57,7 +45,8 @@ module SharpWatcher =
 
     type Args = {
         Root : string
-        Update : Events -> State -> Monad<State>
+        Update : Notification -> State -> Monad<State>
+        Interval : TimeSpan
     }
 
     type Builder() =
@@ -127,12 +116,27 @@ module SharpWatcher =
         member x.MatchesAttributes(other : Subscription) =
             x.Subscription.Attributes = other.Attributes
 
-    type Manager(args: Args) =
+        member x.Match(entry: FileSystemEventEntry) =
+            if entry.IsDirectory
+            then false
+            else
+                let ext = Path.GetExtension(entry.EventArgs.FullPath)
+                x.Subscription.Attributes
+                |> Seq.exists (WatchAttribute.Match entry)
 
-        let init = Events.FromCreated [args.Root]
+    type Manager(args: Args) as self =
+
+        let init = Notification.FromCreated [args.Root]
         let mutable state = Seq.empty
         let attributes = Dictionary<string, AttributesEntry>()
         let subscriptions = Dictionary<int, SubscriptionEntry>()
+        let eventsCache = ConcurrentBag<WatchEvent>()
+        let onFilesystemEvent = new Event<obj*seq<FileSystemEventArgs>>()
+
+        let shouldRaiseEvent (e : FileSystemEventEntry) =
+            match Dictionary.tryGet e.Directory attributes with
+            | Some attrs -> attrs.Match(e)
+            | _ -> false        
 
         let removeSubscription i =
             match Dictionary.tryRemove i subscriptions with
@@ -140,9 +144,6 @@ module SharpWatcher =
                 entry.Subscription.Dispose()
             | None ->
                 failwithf "The index %i was expected to be in the dictionary" i
-
-        let addSubscription (subscription: ISubscription) =
-            ()
 
         let updateState (newState: State) =
 
@@ -178,7 +179,7 @@ module SharpWatcher =
                             failwithf "Attributes expected to have key %s" k
                 )
 
-        let step (events: Events) =
+        let rec step (events: Notification) =
             let (newContext, newState) = args.Update events state Context.Empty
 
             updateState(newState)
@@ -198,106 +199,42 @@ module SharpWatcher =
             
             newContext.Subscriptions
             |> Seq.filter (fun c -> Set.contains c.ConsistentHash shouldBeAdded)
-            |> Seq.iter addSubscription 
+            |> Seq.iter addSubscription
 
-
+        and addSubscription (subscription: ISubscription) =
+            let onEvent _ = dispatchScheduler.Schedule()
+            subscriptions.[subscription.ConsistentHash] =
+                {
+                    Subscription = subscription.Start({ OnEvent = onEvent })
+                }
+            |> ignore
             ()
 
-        do (args.Update init Seq.empty Context.Empty).Deconstruct(&context, &state)
+        and dispatcher () =
+            let nextEvents = Concurrent.tryTakeMany eventsCache
+            let filesystemEvents =
+                nextEvents
+                |> Seq.filterMap (fun e -> e.AsFileSystem)
+                |> Seq.filter shouldRaiseEvent
+                |> Seq.map (fun entry -> entry.EventArgs)
+
+            do
+                if Seq.isEmpty filesystemEvents |> not
+                then
+                    onFilesystemEvent.Trigger(self :> obj, filesystemEvents)
+
+            do nextEvents |> Notification.FromEvents |> step
+
+        and dispatchScheduler : Concurrent.ScheduleConcurrent =
+            Concurrent.createScheduler args.Interval dispatcher
+
+        // todo: add the directory as the first event and dispatch
+
+        [<CLIEvent>]
+        member _.OnFileSystemEvent = onFilesystemEvent.Publish
 
     type Api =
         static member Watch(args : Args) = failwith ""
 
-    let watch root update = Api.Watch { Root = root; Update = update }
-
-[<AutoOpen>]
-module SharpWatcherNonQualified =
-    let watch = SharpWatcher.builder
-
-    module Watch =
-        let subscribe _ _ : SharpWatcher.Subscription = failwith ""
-
-type WatchAttribute = ByExtension of string
-
-type SharpWatcherEvent = {
-    Event : FileSystemEventArgs
-    Attributes : Option<FileAttributes>
-} with
-    static member FromEvent(e : FileSystemEventArgs) =
-        {
-            Event = e
-            Attributes =
-                try
-                    File.GetAttributes(e.FullPath)
-                    |> Some
-                with
-                    :? FileNotFoundException -> None
-        }
-
-type SharpWatcherUpdateContext = {
-    Events : list<SharpWatcherEvent>
-}
-
-type SharpWatcherContext = obj
-
-type SharpWatcherMonad<'a> = SharpWatcherContext -> SharpWatcherContext*'a
-
-type SharpWatcherFileSystem = FileSystem<list<WatchAttribute>>
-
-type private WatchEntry = {
-    Location : string
-    Watcher : FileSystemWatcher
-    mutable WatchAttributes : list<WatchAttribute>
-} with
-
-    interface IDisposable with
-        member x.Dispose() = x.Watcher.Dispose()
-
-type SharpWatcher(
-    initial: SharpWatcherFileSystem,
-    update: SharpWatcherUpdateContext -> SharpWatcherMonad<SharpWatcherFileSystem>) =
-
-    let watchers = Dictionary<string, WatchEntry>()
-
-    let onEvent (fse: SharpWatcherEvent) = ()
-
-    let removeIfExisting (path: string) =
-        match Dictionary.tryGet path watchers with
-        | Some entry ->
-            (entry :> IDisposable).Dispose()
-            watchers.Remove(path)
-            |> ignore
-        | None -> ()
-
-    let onDeleted (event: SharpWatcherEvent) =
-        removeIfExisting event.Event.FullPath
-        onEvent event
-
-    let onCreated (event: SharpWatcherEvent) =
-        removeIfExisting event.Event.FullPath
-
-
-    let updateRegistrations (path: string, attributes: list<WatchAttribute>) =
-        match Dictionary.tryGet path watchers with
-        | Some watchEntry ->
-            watchEntry.WatchAttributes <- attributes
-        | None ->
-            let watcher = new FileSystemWatcher(path)
-
-            (*
-            watcher.Deleted.Add(SharpWatcherEvent.FromEvent >> onEvent)
-            watcher.Created.Add(onEvent)
-            watcher.Changed.Add(onEvent)
-            watcher.Renamed.Add(onEvent)
-
-            watcher.EnableRaisingEvents <- true
-            *)
-
-            watchers.[path] = { Location = path; Watcher = watcher; WatchAttributes = attributes }
-            |> ignore
-
-
-    let rec listMonitoredFolders fs =
-        match fs with
-        | Directory(path, attributes, items) ->
-            (path, attributes) :: List.collect listMonitoredFolders (failwith "")
+    let watch root update =
+        Api.Watch { Root = root; Update = update; Interval = TimeSpan.FromMilliseconds(500.0) }
