@@ -11,7 +11,12 @@ module SharpWatcher =
     type Events = {
         Created : Set<string>
         Deleted : Set<string>
-    }
+    } with
+        static member FromCreated(events: seq<string>) =
+            {
+                Created = Set.ofSeq events
+                Deleted = Set.empty
+            }
 
     type EventsHandler = {
         OnCreated : FileSystemEventArgs -> unit
@@ -23,14 +28,9 @@ module SharpWatcher =
 
         abstract Start : EventsHandler -> IDisposable
 
-    type FolderSubscriptionArgs = {
-        Folder : string
-        Attributes : seq<WatchAttribute>
-    }
-
     type Subscription = {
         Folder : string
-        Attributes : seq<WatchAttribute>
+        Attributes : Set<WatchAttribute>
     }
     with
         interface ISubscription with
@@ -47,7 +47,11 @@ module SharpWatcher =
    
     type Context = {
         Subscriptions : seq<ISubscription>
-    }
+    } with
+        static member Empty with get() =
+            {
+                Subscriptions = Seq.empty
+            }
 
     type Monad<'a> = Context -> Context*'a
 
@@ -64,8 +68,30 @@ module SharpWatcher =
             let (ctx', a') = m ctx
             f a' ctx'
 
-        member _.For(values: seq<'a>, f : 'a -> Monad<Option<Subscription>>) : Monad<seq<Subscription>> =
-            failwith ""
+        member monad.For(values: seq<'a>, f : 'a -> Monad<Option<Subscription>>) : Monad<seq<Subscription>> =
+            match Seq.tryHead values with
+            | None -> monad.Return(Seq.empty)
+            | Some a ->
+                let rest = Seq.skip 1 values
+                let aggregator (state: Monad<seq<Subscription>>) (item: 'a) : Monad<seq<Subscription>> =
+                    monad {
+                        let! rest = state
+                        let! next = f item
+                        return
+                            match next with
+                            | Some next' ->
+                                Seq.concat [rest; Seq.singleton next']
+                            | None -> rest
+                    }
+                let initial =
+                    monad {
+                        let! value = f a
+                        return
+                            match value with
+                            | Some value' -> Seq.singleton value'
+                            | None -> Seq.empty
+                    }
+                Seq.fold aggregator initial rest
 
         member _.Zero() : Monad<Option<Subscription>> = fun ctx -> (ctx, None)
 
@@ -91,6 +117,84 @@ module SharpWatcher =
             }
 
     let builder = Builder()
+    type private SubscriptionEntry = {
+        Subscription : IDisposable
+    }
+
+    type private AttributesEntry = {
+        Subscription : Subscription
+    } with
+        member x.MatchesAttributes(other : Subscription) =
+            x.Subscription.Attributes = other.Attributes
+
+    type Manager(args: Args) =
+
+        let init = Events.FromCreated [args.Root]
+        let mutable state = Seq.empty
+        let attributes = Dictionary<string, AttributesEntry>()
+        let subscriptions = Dictionary<int, SubscriptionEntry>()
+
+        let remove i =
+            match Dictionary.tryRemove i subscriptions with
+            | Some entry ->
+                entry.Subscription.Dispose()
+            | None ->
+                failwithf "The index %i was expected to be in the dictionary" i
+
+        let add (subscription: ISubscription) =
+            ()
+
+        let updateState (newState: State) =
+
+            // This is communism but sometimes it has to
+            // be that way
+            let currentKeys =
+                newState
+                |> Seq.map
+                    (
+                        fun entry ->
+                            match Dictionary.tryGet entry.Folder attributes with
+                            | Some entry' when entry'.MatchesAttributes(entry) |> not ->
+                                attributes.[entry.Folder] = { Subscription = entry }
+                                |> ignore
+                            | None ->
+                                attributes.[entry.Folder] = { Subscription = entry }
+                                |> ignore
+                            | _ -> ()
+
+                            entry.Folder
+                    )
+                |> Set.ofSeq
+            
+            let dictKeys = attributes.Keys |> Set.ofSeq
+
+            Set.difference dictKeys currentKeys
+            |> Seq.iter (fun k -> Dictionary.tryRemove k attributes |> ignore)
+
+        let step (events: Events) =
+            let (newContext, newState) = args.Update events state Context.Empty
+            
+            let newSubscriptions =
+                newContext.Subscriptions
+                |> Seq.map (fun s -> s.ConsistentHash)
+                |> Set.ofSeq
+            let existingSubscriptions =
+                subscriptions.Keys
+                |> Set.ofSeq
+
+            let shouldBeAdded = Set.difference newSubscriptions existingSubscriptions
+            let shouldBeDeleted = Set.difference existingSubscriptions newSubscriptions
+
+            Seq.iter remove shouldBeDeleted
+            
+            newContext.Subscriptions
+            |> Seq.filter (fun c -> Set.contains c.ConsistentHash shouldBeAdded)
+            |> Seq.iter add 
+
+
+            ()
+
+        do (args.Update init Seq.empty Context.Empty).Deconstruct(&context, &state)
 
     type Api =
         static member Watch(args : Args) = failwith ""

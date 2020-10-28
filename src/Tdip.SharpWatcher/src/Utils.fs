@@ -39,3 +39,8 @@ module Dictionary =
         if dictionary.TryGetValue(k, &result)
         then Some result
         else None
+
+    let tryRemove k (dictionary : Dictionary<'k, 'v>) =
+        let result = tryGet k dictionary
+        do dictionary.Remove(k) |> ignore
+        result
