@@ -134,14 +134,14 @@ module SharpWatcher =
         let attributes = Dictionary<string, AttributesEntry>()
         let subscriptions = Dictionary<int, SubscriptionEntry>()
 
-        let remove i =
+        let removeSubscription i =
             match Dictionary.tryRemove i subscriptions with
             | Some entry ->
                 entry.Subscription.Dispose()
             | None ->
                 failwithf "The index %i was expected to be in the dictionary" i
 
-        let add (subscription: ISubscription) =
+        let addSubscription (subscription: ISubscription) =
             ()
 
         let updateState (newState: State) =
@@ -169,10 +169,19 @@ module SharpWatcher =
             let dictKeys = attributes.Keys |> Set.ofSeq
 
             Set.difference dictKeys currentKeys
-            |> Seq.iter (fun k -> Dictionary.tryRemove k attributes |> ignore)
+            |> Seq.iter
+                (
+                    fun k ->
+                        match Dictionary.tryRemove k attributes with
+                        | Some _ -> ()
+                        | None ->
+                            failwithf "Attributes expected to have key %s" k
+                )
 
         let step (events: Events) =
             let (newContext, newState) = args.Update events state Context.Empty
+
+            updateState(newState)
             
             let newSubscriptions =
                 newContext.Subscriptions
@@ -185,11 +194,11 @@ module SharpWatcher =
             let shouldBeAdded = Set.difference newSubscriptions existingSubscriptions
             let shouldBeDeleted = Set.difference existingSubscriptions newSubscriptions
 
-            Seq.iter remove shouldBeDeleted
+            Seq.iter removeSubscription shouldBeDeleted
             
             newContext.Subscriptions
             |> Seq.filter (fun c -> Set.contains c.ConsistentHash shouldBeAdded)
-            |> Seq.iter add 
+            |> Seq.iter addSubscription 
 
 
             ()
