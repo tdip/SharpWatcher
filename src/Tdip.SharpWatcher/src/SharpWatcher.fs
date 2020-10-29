@@ -169,8 +169,7 @@ module SharpWatcher =
 
             let checkTarget path =
                 let attrs = attributes
-                printfn "%A" attrs
-                match Dictionary.tryGet path attributes with
+                match attributes.TryGetFolder(path) with
                 | Some attrs -> attrs.Match(e)
                 | _ -> false
 
@@ -185,6 +184,8 @@ module SharpWatcher =
 
         let updateState (newState: State) =
 
+            state <- newState
+
             // This is communism but sometimes it has to
             // be that way
             let currentKeys =
@@ -192,14 +193,15 @@ module SharpWatcher =
                 |> Seq.map
                     (
                         fun entry ->
-                            match Dictionary.tryGet entry.Folder attributes with
+                            match attributes.TryGetFolder(entry.Folder) with
                             | Some entry' when entry'.MatchesAttributes(entry) |> not ->
-                                attributes.[entry.Folder] <- { Subscription = entry }
+                                attributes.AddFolder(entry.Folder, { Subscription = entry })
                             | None ->
-                                attributes.[entry.Folder] <- { Subscription = entry }
+                                attributes.AddFolder(entry.Folder, { Subscription = entry })
                             | _ -> ()
 
                             entry.Folder
+                            |> makeCanonical
                     )
                 |> Set.ofSeq
             
@@ -209,7 +211,7 @@ module SharpWatcher =
             |> Seq.iter
                 (
                     fun k ->
-                        match Dictionary.tryRemove k attributes with
+                        match attributes.TryRemoveFolder(k) with
                         | Some _ -> ()
                         | None ->
                             failwithf "Attributes expected to have key %s" k
@@ -259,7 +261,12 @@ module SharpWatcher =
                 then
                     onFilesystemEvent.Trigger(self :> obj, filesystemEvents)
 
-            do (attributes, nextEvents) |> Notification.FromEvents |> step
+            let updateEvents =
+                (attributes, nextEvents)
+                |> Notification.FromEvents
+
+            if updateEvents.IsEmpty |> not    
+            then step updateEvents
 
         and dispatchScheduler : Concurrent.ScheduleConcurrent =
             Concurrent.createScheduler args.Interval dispatcher
@@ -276,7 +283,7 @@ module SharpWatcher =
         // todo: add the directory as the first event and dispatch
 
         [<CLIEvent>]
-        member _.OnFileSystemEvent = onFilesystemEvent.Publish
+        member _.OnFileSystemEvents = onFilesystemEvent.Publish
 
     type Api =
         static member Watch(args : Args) = Manager(args)

@@ -28,11 +28,14 @@ module WatchEvents =
 
         static member FromEvent(event: FileSystemEventArgs) =
             let attributes =
-                if event.ChangeType.HasFlag(WatcherChangeTypes.Deleted)
-                then None
-                else
-                    File.GetAttributes(event.FullPath)
-                    |> Some
+                try
+                    if event.ChangeType.HasFlag(WatcherChangeTypes.Deleted)
+                    then None
+                    else
+                        File.GetAttributes(event.FullPath)
+                        |> Some
+                with
+                    :? FileNotFoundException -> None
 
             FileSystem { EventArgs = event; Attributes = attributes }
 
@@ -67,6 +70,10 @@ module WatchEvents =
         Created : Set<string>
         Deleted : Set<string>
     } with
+
+        member x.IsEmpty with get() =
+            Seq.isEmpty x.Created
+            && Seq.isEmpty x.Deleted
 
         static member FromCreated(events: seq<string>) =
             {

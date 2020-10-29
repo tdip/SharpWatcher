@@ -11,7 +11,9 @@ module WatchAttributes =
     with
         static member Match (e: FileSystemEventEntry) (self: WatchAttribute) =
             match self with
-            | ByExtension ext -> ext = e.Extension
+            | ByExtension ext ->
+                ext = e.Extension
+                || sprintf ".%s" ext = e.Extension
 
 
 [<AutoOpen>]
@@ -32,4 +34,8 @@ module FolderIndex =
 
         [<Extension>]
         static member TryGetFolder(index : IDictionary<string, 'v>, key : string) =
-            None
+            Dictionary.tryGet (makeCanonical key) index
+
+        [<Extension>]
+        static member TryRemoveFolder(index : IDictionary<string, 'v>, key : string) =
+            Dictionary.tryRemove (makeCanonical key) index
