@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="src/Utils.fs" />
     <Compile Include="src/WatchEvents.fs" />
+    <Compile Include="src/WatchAttributes.fs" />
     <Compile Include="src/SharpWatcher.fs" />
   </ItemGroup>
 

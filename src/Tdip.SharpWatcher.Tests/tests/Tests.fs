@@ -1,6 +1,7 @@
 namespace Tdip.SharpWatcher
 
 open System
+open System.Threading.Tasks
 open Xunit
 
 module Tests =
@@ -8,16 +9,16 @@ module Tests =
     [<Fact>]
     let ``test watch directory`` () =
 
-        let ignored = failwith ""
+        // let ignored = failwith ""
 
-        let update (events: SharpWatcher.Events) (state : SharpWatcher.State) : SharpWatcher.Monad<SharpWatcher.State> =
+        let update (events: Notification) (state : SharpWatcher.State) : SharpWatcher.Monad<SharpWatcher.State> =
             watch {
                 let! newWatchers =
                     watch {
                         for folder in events.Created do
-                            if Set.contains folder ignored |> not
-                            then
-                                yield Watch.subscribe folder [ByExtension "json"]
+                            // if Set.contains folder ignored |> not
+                            // then
+                            yield Watch.subscribe folder [ByExtension "json"]
                     }
                 let! remainingWatchers =
                     watch {
@@ -31,4 +32,12 @@ module Tests =
                 return Seq.concat [newWatchers; remainingWatchers]
             }
 
-        Assert.True(true)
+        let tcs = TaskCompletionSource<bool>()
+        let watcher = SharpWatcher.watch "/tmp/kaisis/" update
+        watcher.OnFileSystemEvent.Add(
+            fun e ->
+                printfn "%A" e
+                printfn "%A" <| e.ToValueTuple()
+        )
+
+        tcs.Task

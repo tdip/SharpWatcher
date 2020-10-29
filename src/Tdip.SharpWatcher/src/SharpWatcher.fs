@@ -18,7 +18,7 @@ module SharpWatcher =
 
     type Subscription = {
         Folder : string
-        Attributes : Set<WatchAttribute>
+        Attributes : seq<WatchAttribute>
     }
     with
         interface ISubscription with
@@ -26,9 +26,37 @@ module SharpWatcher =
                 with get() = x.Folder.GetHashCode()
 
             member x.Start(handler) =
+                let dirs =
+                    Directory.EnumerateDirectories x.Folder
+                    |> Seq.map WatchEvent.FromExistingFile
+
+                let files =
+                    Directory.EnumerateFiles x.Folder
+                    |> Seq.map WatchEvent.FromExistingFile
+
+                let initialEvents =
+                    Seq.concat [dirs; files]
+                    |> Seq.map FileSystem
+
+                let cliEventHandler (args: FileSystemEventArgs) =
+                    args
+                    |> WatchEvent.FromEvent
+                    |> handler.OnEvent
+
+                let watcher = new FileSystemWatcher()
+                watcher.Path <- x.Folder
+                watcher.Changed.Add(cliEventHandler)
+                watcher.Created.Add(cliEventHandler)
+                watcher.Deleted.Add(cliEventHandler)
+                watcher.Renamed.Add(cliEventHandler)
+                watcher.EnableRaisingEvents <- true
+
+                initialEvents
+                |> Seq.iter handler.OnEvent
+
                 {
                     new IDisposable with
-                        member _.Dispose() = ()
+                        member _.Dispose() = watcher.Dispose()
                 }
 
     type State = seq<Subscription>
@@ -117,16 +145,15 @@ module SharpWatcher =
             x.Subscription.Attributes = other.Attributes
 
         member x.Match(entry: FileSystemEventEntry) =
-            if entry.IsDirectory
-            then false
-            else
-                let ext = Path.GetExtension(entry.EventArgs.FullPath)
+            if entry.HasAttribute(FileAttributes.Directory) |> not
+            then
                 x.Subscription.Attributes
                 |> Seq.exists (WatchAttribute.Match entry)
+            else
+                false
 
     type Manager(args: Args) as self =
 
-        let init = Notification.FromCreated [args.Root]
         let mutable state = Seq.empty
         let attributes = Dictionary<string, AttributesEntry>()
         let subscriptions = Dictionary<int, SubscriptionEntry>()
@@ -134,9 +161,20 @@ module SharpWatcher =
         let onFilesystemEvent = new Event<obj*seq<FileSystemEventArgs>>()
 
         let shouldRaiseEvent (e : FileSystemEventEntry) =
-            match Dictionary.tryGet e.Directory attributes with
-            | Some attrs -> attrs.Match(e)
-            | _ -> false        
+            let targets =
+                [
+                    e.EventArgs.FullPath
+                    Path.GetDirectoryName(e.EventArgs.FullPath)
+                ]
+
+            let checkTarget path =
+                let attrs = attributes
+                printfn "%A" attrs
+                match Dictionary.tryGet path attributes with
+                | Some attrs -> attrs.Match(e)
+                | _ -> false
+
+            targets |> Seq.exists checkTarget
 
         let removeSubscription i =
             match Dictionary.tryRemove i subscriptions with
@@ -156,11 +194,9 @@ module SharpWatcher =
                         fun entry ->
                             match Dictionary.tryGet entry.Folder attributes with
                             | Some entry' when entry'.MatchesAttributes(entry) |> not ->
-                                attributes.[entry.Folder] = { Subscription = entry }
-                                |> ignore
+                                attributes.[entry.Folder] <- { Subscription = entry }
                             | None ->
-                                attributes.[entry.Folder] = { Subscription = entry }
-                                |> ignore
+                                attributes.[entry.Folder] <- { Subscription = entry }
                             | _ -> ()
 
                             entry.Folder
@@ -202,13 +238,13 @@ module SharpWatcher =
             |> Seq.iter addSubscription
 
         and addSubscription (subscription: ISubscription) =
-            let onEvent _ = dispatchScheduler.Schedule()
-            subscriptions.[subscription.ConsistentHash] =
+            let onEvent event =
+                eventsCache.Add event
+                dispatchScheduler.Schedule()
+            subscriptions.[subscription.ConsistentHash] <-
                 {
                     Subscription = subscription.Start({ OnEvent = onEvent })
                 }
-            |> ignore
-            ()
 
         and dispatcher () =
             let nextEvents = Concurrent.tryTakeMany eventsCache
@@ -223,10 +259,19 @@ module SharpWatcher =
                 then
                     onFilesystemEvent.Trigger(self :> obj, filesystemEvents)
 
-            do nextEvents |> Notification.FromEvents |> step
+            do (attributes, nextEvents) |> Notification.FromEvents |> step
 
         and dispatchScheduler : Concurrent.ScheduleConcurrent =
             Concurrent.createScheduler args.Interval dispatcher
+
+        do
+            args.Root
+            |> Init
+            |> eventsCache.Add
+
+        do
+            dispatchScheduler.Schedule()
+
 
         // todo: add the directory as the first event and dispatch
 
@@ -234,7 +279,18 @@ module SharpWatcher =
         member _.OnFileSystemEvent = onFilesystemEvent.Publish
 
     type Api =
-        static member Watch(args : Args) = failwith ""
+        static member Watch(args : Args) = Manager(args)
 
     let watch root update =
         Api.Watch { Root = root; Update = update; Interval = TimeSpan.FromMilliseconds(500.0) }
+
+[<AutoOpen>]
+module SharpWatcherNonQualified =
+    let watch = SharpWatcher.builder
+
+    module Watch =
+        let subscribe folder attributes : SharpWatcher.Subscription =
+            {
+                Folder = folder
+                Attributes = attributes
+            }

@@ -38,13 +38,13 @@ module Indexed =
         else None
 
 module Dictionary =
-    let tryGet k (dictionary : Dictionary<'k, 'v>) =
+    let tryGet k (dictionary : IDictionary<'k, 'v>) =
         let mutable result = Unchecked.defaultof<'v>
         if dictionary.TryGetValue(k, &result)
         then Some result
         else None
 
-    let tryRemove k (dictionary : Dictionary<'k, 'v>) =
+    let tryRemove k (dictionary : IDictionary<'k, 'v>) =
         let result = tryGet k dictionary
         do dictionary.Remove(k) |> ignore
         result
