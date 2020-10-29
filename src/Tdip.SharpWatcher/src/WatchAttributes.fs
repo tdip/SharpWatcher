@@ -25,13 +25,11 @@ module FolderIndex =
     [<Extension>]
     type FolderIndexExtensions =
 
-        let x = ""
-
         [<Extension>]
         static member AddFolder(index : IDictionary<string, 'v>, key: string, value: 'v) =
 
             index.[makeCanonical key]  <- value
 
-
         [<Extension>]
-        static member 
+        static member TryGetFolder(index : IDictionary<string, 'v>, key : string) =
+            None
