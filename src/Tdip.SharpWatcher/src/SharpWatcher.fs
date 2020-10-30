@@ -136,7 +136,10 @@ module SharpWatcher =
     let builder = Builder()
     type private SubscriptionEntry = {
         Subscription : IDisposable
-    }
+    } with
+
+        interface IDisposable with
+            member x.Dispose() = x.Subscription.Dispose()
 
     type private AttributesEntry = {
         Subscription : Subscription
@@ -158,7 +161,7 @@ module SharpWatcher =
         let attributes = Dictionary<string, AttributesEntry>()
         let subscriptions = Dictionary<int, SubscriptionEntry>()
         let eventsCache = ConcurrentBag<WatchEvent>()
-        let onFilesystemEvent = new Event<obj*seq<FileSystemEventArgs>>()
+        let onFilesystemEvent = DelegateEvent<EventHandler<FileSystemEventArgs>>()
 
         let shouldRaiseEvent (e : FileSystemEventEntry) =
             let targets =
@@ -259,7 +262,7 @@ module SharpWatcher =
             do
                 if Seq.isEmpty filesystemEvents |> not
                 then
-                    onFilesystemEvent.Trigger(self :> obj, filesystemEvents)
+                    onFilesystemEvent.Trigger([| self :> obj, filesystemEvents |])
 
             let updateEvents =
                 (attributes, nextEvents)
@@ -285,8 +288,14 @@ module SharpWatcher =
         [<CLIEvent>]
         member _.OnFileSystemEvents = onFilesystemEvent.Publish
 
+        interface IDisposable with
+            member x.Dispose() =
+                subscriptions
+                |> Seq.cast<IDisposable>
+                |> Seq.iter (fun s -> s.Dispose())
+
     type Api =
-        static member Watch(args : Args) = Manager(args)
+        static member Watch(args : Args) = new Manager(args)
 
     let watch root update =
         Api.Watch { Root = root; Update = update; Interval = TimeSpan.FromMilliseconds(500.0) }
