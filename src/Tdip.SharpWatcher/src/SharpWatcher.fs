@@ -161,7 +161,7 @@ module SharpWatcher =
         let attributes = Dictionary<string, AttributesEntry>()
         let subscriptions = Dictionary<int, SubscriptionEntry>()
         let eventsCache = ConcurrentBag<WatchEvent>()
-        let onFilesystemEvent = DelegateEvent<EventHandler<FileSystemEventArgs>>()
+        let onFilesystemEvent = DelegateEvent<EventHandler<seq<FileSystemEventArgs>>>()
 
         let shouldRaiseEvent (e : FileSystemEventEntry) =
             let targets =
@@ -262,7 +262,7 @@ module SharpWatcher =
             do
                 if Seq.isEmpty filesystemEvents |> not
                 then
-                    onFilesystemEvent.Trigger([| self :> obj, filesystemEvents |])
+                    onFilesystemEvent.Trigger [| self :> obj; filesystemEvents |]
 
             let updateEvents =
                 (attributes, nextEvents)

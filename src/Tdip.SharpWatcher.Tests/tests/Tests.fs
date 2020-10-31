@@ -44,7 +44,7 @@ module Tests =
         let tcs = TaskCompletionSource<bool>()
         let watcher = SharpWatcher.watch testsDirectory allFolders
         watcher.OnFileSystemEvents.Add(
-            fun (_, e : seq<FileSystemEventArgs>) ->
+            fun (e : seq<FileSystemEventArgs>) ->
                 try
                     let event = Seq.head e
                     let expected = Path.Combine(testsDirectory, newFileName)
@@ -69,7 +69,7 @@ module Tests =
         let watcher = SharpWatcher.watch testsDirectory allFolders
 
         watcher.OnFileSystemEvents.Add(
-            fun (_, e : seq<FileSystemEventArgs>) ->
+            fun (e : seq<FileSystemEventArgs>) ->
                 try
                     let event = Seq.head e
                     let expected = Path.Combine(testsDirectory, newFolderName, newFileName)
