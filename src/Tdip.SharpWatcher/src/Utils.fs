@@ -54,21 +54,31 @@ module Concurrent =
     type ScheduleConcurrent(time : TimeSpan, action : unit -> unit) =
         let mutable ``lock`` = 0
 
-        member _.Schedule() =
-            if Interlocked.Increment(&``lock``) = 1
-            then
+        member self.Schedule() =
+            match Interlocked.Increment(&``lock``) with
+            | 1 ->
                 async {
                     do!
                         Task.Delay time
                         |> Async.AwaitTask
+                    do action()
                     do
                         Interlocked.Decrement(&``lock``)
                         |> ignore
-                    do action()
                 }
                 |> Async.StartAsTask
                 |> ignore
-            else
+            | 2 ->
+                Interlocked.Decrement(&``lock``)
+                |> ignore
+                async {
+                    do! Task.Delay time
+                        |> Async.AwaitTask
+                    do self.Schedule()
+                }
+                |> Async.StartAsTask
+                |> ignore
+            | _ ->
                 Interlocked.Decrement(&``lock``)
                 |> ignore
 
