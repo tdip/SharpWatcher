@@ -1,12 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>net5.0</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="src/Utils.fs" />
+    <Compile Include="src/WatchEvents.fs" />
+    <Compile Include="src/WatchAttributes.fs" />
     <Compile Include="src/SharpWatcher.fs" />
-    <Compile Include="src/SharpWatcherEvaluator.fs" />
   </ItemGroup>
 
 </Project>
