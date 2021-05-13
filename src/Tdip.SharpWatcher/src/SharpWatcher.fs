@@ -171,7 +171,6 @@ module SharpWatcher =
                 ]
 
             let checkTarget path =
-                let attrs = attributes
                 match attributes.TryGetFolder(path) with
                 | Some attrs -> attrs.Match(e)
                 | _ -> false

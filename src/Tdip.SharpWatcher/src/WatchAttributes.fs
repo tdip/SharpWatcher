@@ -11,6 +11,7 @@ module WatchAttributes =
     with
         static member Match (e: FileSystemEventEntry) (self: WatchAttribute) =
             match self with
+            | ByExtension ext when ext = "*" -> true
             | ByExtension ext ->
                 ext = e.Extension
                 || sprintf ".%s" ext = e.Extension
